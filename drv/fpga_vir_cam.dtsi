@@ -15,10 +15,13 @@
                 //pinctrl-0 = <&mipim0_camera2_clk>;
                 //rockchip,grf = <&sys_grf>;
                 //power-gpios = <&gpio1 RK_PB0 GPIO_ACTIVE_HIGH>;//modify camera addr 0x37
+
+				//rockchip camera dts
                 rockchip,camera-module-index = <1>;
                 rockchip,camera-module-facing = "back";
                 rockchip,camera-module-name = "CMK-OT2022-PX1";
-                //rockchip,camera-module-lens-name = "IR0147-50IRC-8M-F20";
+                rockchip,camera-module-lens-name = "IR0147-50IRC-8M-F20";
+
                 port {
                         fpga_vir_cam_out1: endpoint {
                                 remote-endpoint = <&mipi_in_fpga_vir_cam>;

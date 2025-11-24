@@ -5,6 +5,10 @@
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-fwnode.h>
+#include <media/media-entity.h>
+#include <linux/device.h>
+#include <linux/rk-camera-module.h>
+#include <media/v4l2-subdev.h>
 
 #include "fpga_vir_cam.h"
 
@@ -18,6 +22,9 @@
 
 #define FPGA_VIR_CAM_DATA_LANES 4
 
+#define to_pixrate(__link_freq, __lanes) \
+    ((__link_freq) * 2LL * (__lanes) / 8LL)
+
 struct fpga_vir_cam_mode {
     __u32 width;
     __u32 height;
@@ -27,6 +34,7 @@ struct fpga_vir_cam_mode {
 };
 
 struct fpga_vir_cam {  
+ //   struct i2c_client  *client;
     struct v4l2_subdev sd;
     struct media_pad pad;
 
@@ -39,10 +47,14 @@ struct fpga_vir_cam {
     struct fpga_vir_cam_mode *cur_mode;
 
     struct mutex mutex;
-    int streaming;
-    int identified;
+    bool streaming;
+    bool identified;
     
     /* Other members as needed */
+    __u32			module_index;
+	const char		*module_facing;
+	const char		*module_name;
+	const char		*len_name;
 };
 
 enum link_freq_menu_index {
@@ -58,74 +70,138 @@ static const struct fpga_vir_cam_mode supported_modes[] = {
         .width = 1024,
         .height = 1025,
         .link_freq_index = 0,
-        .pixel_rate = 742500000,
+        .pixel_rate = to_pixrate(link_freq_menu_items[0], FPGA_VIR_CAM_DATA_LANES),
         .pixel_code = MEDIA_BUS_FMT_Y8_1X8,
     },
-    {
-        .width = 1024,
-        .height = 513,
-        .link_freq_index = 0,
-        .pixel_rate = 371250000,
-        .pixel_code = MEDIA_BUS_FMT_Y8_1X8,
-    },
-    {
-        .width = 1024,
-        .height = 513,
-        .link_freq_index = 0,
-        .pixel_rate = 371250000,
-        .pixel_code = MEDIA_BUS_FMT_Y8_1X8,
-    },
+    // {
+    //     .width = 1024,
+    //     .height = 513,
+    //     .link_freq_index = 0,
+    //     .pixel_rate = to_pixrate(link_freq_menu_items[0], FPGA_VIR_CAM_DATA_LANES),,
+    //     .pixel_code = MEDIA_BUS_FMT_Y8_1X8,
+    // },
+    // {
+    //     .width = 1024,
+    //     .height = 513,
+    //     .link_freq_index = 0,
+    //     .pixel_rate = to_pixrate(link_freq_menu_items[0], FPGA_VIR_CAM_DATA_LANES),
+    //     .pixel_code = MEDIA_BUS_FMT_Y8_1X8,
+    // },
 };
 
 #define to_fpga_vir_cam(_sd)	container_of(_sd, struct fpga_vir_cam, sd)
 
-static int fpga_vir_cam_read_reg(struct fpga_vir_cam *fvc,
-            __u16 reg, __u16 *val)
-{
-    struct i2c_client *client = v4l2_get_subdevdata(&fvc->sd);
-    int ret;
-    struct i2c_msg msgs[2];
-    u8 reg_buf[2];
-    __u16 val_be;
+// static int fpga_vir_cam_read_reg(struct fpga_vir_cam *fvc,
+//             __u16 reg, __u16 *val)
+// {
+//     struct i2c_client *client = v4l2_get_subdevdata(&fvc->sd);
+//     int ret;
+//     struct i2c_msg msgs[2];
+//     u8 reg_buf[2];
+//     __u16 val_be;
 
-    reg_buf[0] = reg >> 8;
-    reg_buf[1] = reg & 0xFF;
+//     reg_buf[0] = reg >> 8;
+//     reg_buf[1] = reg & 0xFF;
  
-    msgs[0].addr = client->addr;
+//     msgs[0].addr = client->addr;
+// 	msgs[0].flags = 0;
+// 	msgs[0].len = 2;
+// 	msgs[0].buf = reg_buf;
+
+//     msgs[1].addr = client->addr;
+//     msgs[1].flags = I2C_M_RD;
+//     msgs[1].len = 2;
+//     msgs[1].buf = (u8 *)&val_be;
+
+//     mutex_lock(&fvc->mutex);
+//     ret = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
+//     mutex_unlock(&fvc->mutex);
+
+//     if (ret != ARRAY_SIZE(msgs))
+// 		return -EIO;
+//     *val = be16_to_cpu(val_be);
+//     return 0;
+// }
+// static int fpga_vir_cam_write_reg(struct fpga_vir_cam *fvc,
+//             __u16 reg, __u16 val)
+// {
+//     struct i2c_client *client = v4l2_get_subdevdata(&fvc->sd);
+//     int ret;
+//     u8 buf[4];
+//     buf[0] = reg >> 8;
+//     buf[1] = reg & 0xFF;
+//     buf[2] = (val) >> 8;
+//     buf[3] = (val) & 0xFF;
+//     mutex_lock(&fvc->mutex);
+//     ret = i2c_master_send(client, buf, 4);
+//     mutex_unlock(&fvc->mutex);
+//     if (ret != 4)
+//         return -EIO;
+//     return 0;
+// }
+
+static int fpga_vir_cam_read_reg(struct i2c_client *client, u16 reg,
+			    unsigned int len, u32 *val)
+{
+	struct i2c_msg msgs[2];
+	u8 *data_be_p;
+	__be32 data_be = 0;
+	__be16 reg_addr_be = cpu_to_be16(reg);
+	int ret;
+
+	if (len > 4 || !len)
+		return -EINVAL;
+
+	data_be_p = (u8 *)&data_be;
+	/* Write register address */
+	msgs[0].addr = client->addr;
 	msgs[0].flags = 0;
 	msgs[0].len = 2;
-	msgs[0].buf = reg_buf;
+	msgs[0].buf = (u8 *)&reg_addr_be;
 
-    msgs[1].addr = client->addr;
-    msgs[1].flags = I2C_M_RD;
-    msgs[1].len = 2;
-    msgs[1].buf = (u8 *)&val_be;
+	/* Read data from register */
+	msgs[1].addr = client->addr;
+	msgs[1].flags = I2C_M_RD;
+	msgs[1].len = len;
+	msgs[1].buf = &data_be_p[4 - len];
 
-    mutex_lock(&fvc->mutex);
-    ret = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
-    mutex_unlock(&fvc->mutex);
-
-    if (ret != ARRAY_SIZE(msgs))
+	ret = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
+	if (ret != ARRAY_SIZE(msgs))
 		return -EIO;
-    *val = be16_to_cpu(val_be);
-    return 0;
+
+	*val = be32_to_cpu(data_be);
+
+	return 0;
 }
-static int fpga_vir_cam_write_reg(struct fpga_vir_cam *fvc,
-            __u16 reg, __u16 val)
+
+static int fpga_vir_cam_write_reg(struct i2c_client *client, u16 reg,
+			     u32 len, u32 val)
 {
-    struct i2c_client *client = v4l2_get_subdevdata(&fvc->sd);
-    int ret;
-    u8 buf[4];
-    buf[0] = reg >> 8;
-    buf[1] = reg & 0xFF;
-    buf[2] = (val) >> 8;
-    buf[3] = (val) & 0xFF;
-    mutex_lock(&fvc->mutex);
-    ret = i2c_master_send(client, buf, 4);
-    mutex_unlock(&fvc->mutex);
-    if (ret != 4)
-        return -EIO;
-    return 0;
+	u32 buf_i, val_i;
+	u8 buf[6];
+	u8 *val_p;
+	__be32 val_be;
+
+	dev_dbg(&client->dev, "write reg(0x%x val:0x%x)!\n", reg, val);
+
+	if (len > 4)
+		return -EINVAL;
+
+	buf[0] = reg >> 8;
+	buf[1] = reg & 0xff;
+
+	val_be = cpu_to_be32(val);
+	val_p = (u8 *)&val_be;
+	buf_i = 2;
+	val_i = 4 - len;
+
+	while (val_i < 4)
+		buf[buf_i++] = val_p[val_i++];
+
+	if (i2c_master_send(client, buf, len + 2) != len + 2)
+		return -EIO;
+
+	return 0;
 }
 
 static int fpga_vir_cam_read_ctrl(struct v4l2_ctrl *ctrl)
@@ -134,10 +210,12 @@ static int fpga_vir_cam_read_ctrl(struct v4l2_ctrl *ctrl)
                                         struct fpga_vir_cam, ctrl_handler);
     int ret = 0;
     struct fpga_vir_cam_reg *reg = (struct fpga_vir_cam_reg *)ctrl->p_new.p;
-    
+    struct i2c_client *client = v4l2_get_subdevdata(&dev->sd);
+
     switch (ctrl->id) {
     case FPGA_VIR_CAM_V4L2_REG_READ:
-        ret = fpga_vir_cam_read_reg(dev, reg->reg_addr, &reg->reg_value);
+        //ret = fpga_vir_cam_read_reg(dev, reg->reg_addr, &reg->reg_value);
+        ret = fpga_vir_cam_read_reg(client, reg->reg_addr, 4, &reg->reg_value);
         break;
     default:
         ret = -EINVAL;
@@ -155,13 +233,15 @@ static int fpga_vir_cam_write_ctrl(struct v4l2_ctrl *ctrl)
         return -EBUSY;
     }
     struct fpga_vir_cam_reg *reg = (struct fpga_vir_cam_reg *)ctrl->p_new.p;
+    struct i2c_client *client = v4l2_get_subdevdata(&dev->sd);
     switch (ctrl->id) {
     case FPGA_VIR_CAM_V4L2_REG_WRITE:
         if (reg->reg_addr < FPGA_VIR_CAM_PROTECT_REG) {
             ret = -EACCES;
             break;
         }
-        ret = fpga_vir_cam_write_reg(fvc, reg->reg_addr, reg->reg_value);
+        //ret = fpga_vir_cam_write_reg(fvc, reg->reg_addr, reg->reg_value);
+        ret = fpga_vir_cam_write_reg(client, reg->reg_addr, 4, reg->reg_value);
         break;
     default:
         ret = -EINVAL;
@@ -317,25 +397,25 @@ static int fpga_vir_cam_set_pad_format(struct v4l2_subdev *sd,
         fvc->cur_mode = mode;
         __v4l2_ctrl_s_ctrl(fvc->link_freq, mode->link_freq_index);
         link_freq = link_freq_menu_items[mode->link_freq_index];
-        pixel_rate = link_freq_to_pixel_rate(link_freq);
+        pixel_rate = to_pixrate(link_freq, FPGA_VIR_CAM_DATA_LANES);
         __v4l2_ctrl_s_ctrl_int64(fvc->pixel_rate, pixel_rate);
 
-        /* Update limits and set FPS to default */
-        vblank_def = fvc->cur_mode->vts_def -
-                 fvc->cur_mode->height;
-        vblank_min = fvc->cur_mode->vts_min -
-                 fvc->cur_mode->height;
-        __v4l2_ctrl_modify_range(fvc->vblank, vblank_min,
-                     FPGA_VIR_CAM_VTS_MAX
-                     - fvc->cur_mode->height,
-                     1,
-                     vblank_def);
-        __v4l2_ctrl_s_ctrl(fvc->vblank, vblank_def);
-        h_blank =
-            link_freq_configs[mode->link_freq_index].pixels_per_line
-             - fvc->cur_mode->width;
-        __v4l2_ctrl_modify_range(fvc->hblank, h_blank,
-                     h_blank, 1, h_blank);
+        // /* Update limits and set FPS to default */
+        // vblank_def = fvc->cur_mode->vts_def -
+        //          fvc->cur_mode->height;
+        // vblank_min = fvc->cur_mode->vts_min -
+        //          fvc->cur_mode->height;
+        // __v4l2_ctrl_modify_range(fvc->vblank, vblank_min,
+        //              FPGA_VIR_CAM_VTS_MAX
+        //              - fvc->cur_mode->height,
+        //              1,
+        //              vblank_def);
+        // __v4l2_ctrl_s_ctrl(fvc->vblank, vblank_def);
+        // h_blank =
+        //     link_freq_configs[mode->link_freq_index].pixels_per_line
+        //      - fvc->cur_mode->width;
+        // __v4l2_ctrl_modify_range(fvc->hblank, h_blank,
+        //              h_blank, 1, h_blank);
     }
 
     
@@ -406,7 +486,7 @@ static int fpga_vir_cam_init_controls(struct fpga_vir_cam *fvc)
 	if (fvc->link_freq)
 		fvc->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
-    pixel_rate_max = link_freq_to_pixel_rate(link_freq_menu_items[0]);
+    pixel_rate_max = to_pixrate(link_freq_menu_items[0], FPGA_VIR_CAM_DATA_LANES);
 	pixel_rate_min = 0;
 	/* By default, PIXEL_RATE is read only */
 	fvc->pixel_rate = v4l2_ctrl_new_std(ctrl_hdlr, &fpga_vir_cam_ctrl_ops,
@@ -508,18 +588,35 @@ out_err:
 }
 static int fpga_vir_cam_probe(struct i2c_client *client)
 {
+    struct device *dev = &client->dev;
     struct fpga_vir_cam *fvc;
+    struct device_node *node = client->dev->of_node;
     int ret;
 
     fvc = devm_kzalloc(&client->dev, sizeof(*fvc), GFP_KERNEL);
     if (!fvc)
         return -ENOMEM;
 
+    ret = of_property_read_u32(node, RKMODULE_CAMERA_MODULE_INDEX,
+				   &fvc->module_index);
+	ret |= of_property_read_string(node, RKMODULE_CAMERA_MODULE_FACING,
+				       &fvc->module_facing);
+	ret |= of_property_read_string(node, RKMODULE_CAMERA_MODULE_NAME,
+				       &fvc->module_name);
+	ret |= of_property_read_string(node, RKMODULE_CAMERA_LENS_NAME,
+				       &fvc->len_name);
+	if (ret) {
+		dev_err(&client->dev, "could not get module information!\n");
+		return -EINVAL;
+	}
+
     ret = fpga_vir_cam_chkeck_hwcfg(&client->dev);
-    if (IS_ERR(ret)) {
+    if (ret) {
         dev_err(&client->dev, "failed to check hwcfg: %d", ret);  
         return ret;
     }
+    
+
     v4l2_i2c_subdev_init(&fvc->sd, client, &fpga_vir_cam_stream_ops);
 
     mutex_init(&fvc->mutex);
@@ -568,17 +665,41 @@ static void fpga_vir_cam_remove(struct i2c_client *client)
 	//pm_runtime_disable(&client->dev);
 }
 
+static const struct of_device_id fpga_vir_cam_of_match[] = {
+	{ .compatible = "pys,fpga_vir_cam", },
+	{},
+};
+
+static const struct i2c_device_id fpga_vir_cam_match_id[] = {
+	{ "pys,fpga_vir_cam", 0},
+	{},
+};
+
 static struct i2c_driver fpga_vir_cam_i2c_driver = {
 	.driver = {
 		.name = "fpga_vir_cam",
 		//.pm = &fpga_vir_cam_pm_ops,
+        .of_match_table = of_match_ptr(fpga_vir_cam_of_match),
 	},
 	.probe_new = fpga_vir_cam_probe,
 	.remove = fpga_vir_cam_remove,
+    .id_table	= fpga_vir_cam_match_id,
 	//.flags = I2C_DRV_ACPI_WAIVE_D0_PROBE,
 };
+//module_i2c_driver(fpga_vir_cam_i2c_driver);
 
-module_i2c_driver(fpga_vir_cam_i2c_driver);
+static int __init sensor_mod_init(void)
+{
+	return i2c_add_driver(&fpga_vir_cam_i2c_driver);
+}
+
+static void __exit sensor_mod_exit(void)
+{
+	i2c_del_driver(&fpga_vir_cam_i2c_driver);
+}
+
+device_initcall_sync(sensor_mod_init);
+module_exit(sensor_mod_exit);
 
 MODULE_DESCRIPTION("FPGA Virtual Camera Driver");
 MODULE_AUTHOR("YangGP <1945728545@qq.com>");

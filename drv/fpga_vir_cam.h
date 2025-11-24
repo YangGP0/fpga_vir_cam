@@ -9,7 +9,7 @@
 
 struct fpga_vir_cam_reg {
     unsigned short reg_value;
-    unsigned short reg_addr;
+    unsigned int reg_addr;
 };
 
 

@@ -1,4 +1,4 @@
-#include <linux/acpi.h>
+//#include <linux/acpi.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
@@ -6,9 +6,9 @@
 #include <media/v4l2-device.h>
 #include <media/v4l2-fwnode.h>
 
-/*v4l2 ctrl id*/ 
-#define FPGA_VIR_CAM_V4L2_REG_READ  (V4L2_CID_PRIVATE_BASE + 0)
-#define FPGA_VIR_CAM_V4L2_REG_WRITE (V4L2_CID_PRIVATE_BASE + 1)
+#include "fpga_vir_cam.h"
+
+
 /*FPGA START/STOP TRANS REG*/
 #define FPGA_VIR_CAM_REG_START ((__u16)0x0) // 
 
@@ -18,25 +18,6 @@
 
 #define FPGA_VIR_CAM_DATA_LANES 4
 
-struct fpga_vir_cam_reg {
-    __u16 reg_value;
-    __u16 reg_addr;
-};
-
-struct fpga_vir_cam {  
-    struct v4l2_subdev sd;
-    struct media_pad pad;
-
-    struct v4l2_ctrl_handler ctrl_handler;
-    struct v4l2_ctrl *rd_reg;
-    struct v4l2_ctrl *wr_reg;
-    //struct v4l2_ctrl *refresh_reg;
-    struct mutex mutex;
-    bool streaming;
-    bool identified;
-    /* Other members as needed */
-};
-
 struct fpga_vir_cam_mode {
     __u32 width;
     __u32 height;
@@ -45,20 +26,31 @@ struct fpga_vir_cam_mode {
     __u32 pixel_code;
 };
 
+struct fpga_vir_cam {  
+    struct v4l2_subdev sd;
+    struct media_pad pad;
+
+    struct v4l2_ctrl_handler ctrl_handler;
+    struct v4l2_ctrl *link_freq;
+    struct v4l2_ctrl *pixel_rate;
+    struct v4l2_ctrl *rd_reg;
+    struct v4l2_ctrl *wr_reg;
+   
+    struct fpga_vir_cam_mode *cur_mode;
+
+    struct mutex mutex;
+    int streaming;
+    int identified;
+    
+    /* Other members as needed */
+};
+
 enum link_freq_menu_index {
-    FPGA_VIR_CAM_LINK_FREQ_250_MHZ = 0,
-    FPGA_VIR_CAM_LINK_FREQ_500_MHZ,
-	FPGA_VIR_CAM_LINK_FREQ_750_MHZ,
-    FPGA_VIR_CAM_LINK_FREQ_1250_MHZ,     
-    FPGA_VIR_CAM_LINK_FREQ_2250_MHZ,
+    FPGA_VIR_CAM_LINK_FREQ_1250_MHZ = 0,     
 };
 
 static const s64 link_freq_menu_items[] = {
-    250000000ULL,
-    500000000ULL,  
-    750000000ULL,
     1250000000ULL,
-    2250000000ULL
 };
 
 static const struct fpga_vir_cam_mode supported_modes[] = {
@@ -67,21 +59,21 @@ static const struct fpga_vir_cam_mode supported_modes[] = {
         .height = 1025,
         .link_freq_index = 0,
         .pixel_rate = 742500000,
-        .pixel_code = MEDIA_BUS_FMT_SBGGR10_1X10,
+        .pixel_code = MEDIA_BUS_FMT_Y8_1X8,
     },
     {
         .width = 1024,
         .height = 513,
         .link_freq_index = 0,
         .pixel_rate = 371250000,
-        .pixel_code = MEDIA_BUS_FMT_SBGGR10_1X10,
+        .pixel_code = MEDIA_BUS_FMT_Y8_1X8,
     },
     {
         .width = 1024,
         .height = 513,
         .link_freq_index = 0,
         .pixel_rate = 371250000,
-        .pixel_code = MEDIA_BUS_FMT_SBGGR10_1X10,
+        .pixel_code = MEDIA_BUS_FMT_Y8_1X8,
     },
 };
 
@@ -231,7 +223,7 @@ static int fpga_vir_cam_enum_mbus_code(struct v4l2_subdev *sd,
 	if (code->index > 0)
 		return -EINVAL;
 
-	code->code = MEDIA_BUS_FMT_SGRBG10_1X10;
+	code->code = MEDIA_BUS_FMT_Y8_1X8;
 
 	return 0;
 }
@@ -243,7 +235,7 @@ static int fpga_vir_cam_enum_frame_size(struct v4l2_subdev *sd,
 	if (fse->index >= ARRAY_SIZE(supported_modes))
 		return -EINVAL;
 
-	if (fse->code != MEDIA_BUS_FMT_SGRBG10_1X10)
+	if (fse->code != MEDIA_BUS_FMT_Y8_1X8)
 		return -EINVAL;
 
 	fse->min_width = supported_modes[fse->index].width;
@@ -259,7 +251,7 @@ static void fpga_vir_cam_update_pad_format(const struct fpga_vir_cam_mode *mode,
 {
 	fmt->format.width = mode->width;
 	fmt->format.height = mode->height;
-	fmt->format.code = MEDIA_BUS_FMT_SGRBG10_1X10;
+	fmt->format.code = MEDIA_BUS_FMT_Y8_1X8;
 	fmt->format.field = V4L2_FIELD_NONE;
 }
 
@@ -309,9 +301,9 @@ static int fpga_vir_cam_set_pad_format(struct v4l2_subdev *sd,
 
     mutex_lock(&fvc->mutex);
 
-    /* Only one raw bayer(GRBG) order is supported */
-    if (fmt->format.code != MEDIA_BUS_FMT_SGRBG10_1X10)
-        fmt->format.code = MEDIA_BUS_FMT_SGRBG10_1X10;
+    /* Only one raw bayer(Y8) order is supported */
+    if (fmt->format.code != MEDIA_BUS_FMT_Y8_1X8)
+        fmt->format.code = MEDIA_BUS_FMT_Y8_1X8;
 
     mode = v4l2_find_nearest_size(supported_modes,
                       ARRAY_SIZE(supported_modes),
@@ -346,7 +338,7 @@ static int fpga_vir_cam_set_pad_format(struct v4l2_subdev *sd,
                      h_blank, 1, h_blank);
     }
 
-    mutex
+    
 }
 
 static const struct v4l2_subdev_pad_ops fpga_vir_cam_pad_ops = {
@@ -379,7 +371,7 @@ static int fpga_vir_cam_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	try_fmt->field = V4L2_FIELD_NONE;
 
 	/* No crop or compose */
-	mutex_unlock(&ov13b->mutex);
+	mutex_unlock(&fvc->mutex);
     return 0;
 }
 static const struct v4l2_subdev_internal_ops fpga_vir_cam_internal_ops = {
@@ -394,17 +386,36 @@ static int fpga_vir_cam_init_controls(struct fpga_vir_cam *fvc)
     struct v4l2_ctrl_config reg_write_cfg = {0};
     struct i2c_client *client = v4l2_get_subdevdata(&fvc->sd);
     int ret;
+    __u32 max, pixel_rate_max, pixel_rate_min ;
 
     ctrl_hdlr = &fvc->ctrl_handler;
-    ret = v4l2_ctrl_handler_init(ctrl_hdlr, 2);
+    ret = v4l2_ctrl_handler_init(ctrl_hdlr, 4);
     if (IS_ERR(ret))
         return ret;
 
     mutex_init(&fvc->mutex);
     ctrl_hdlr->lock = &fvc->mutex;
 
+    max = ARRAY_SIZE(link_freq_menu_items) - 1;
+    fvc->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr,
+                        &fpga_vir_cam_ctrl_ops,
+                        V4L2_CID_LINK_FREQ,
+                        max,
+                        0,
+                        link_freq_menu_items);
+	if (fvc->link_freq)
+		fvc->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+
+    pixel_rate_max = link_freq_to_pixel_rate(link_freq_menu_items[0]);
+	pixel_rate_min = 0;
+	/* By default, PIXEL_RATE is read only */
+	fvc->pixel_rate = v4l2_ctrl_new_std(ctrl_hdlr, &fpga_vir_cam_ctrl_ops,
+					      V4L2_CID_PIXEL_RATE,
+					      pixel_rate_min, pixel_rate_max,
+					      1, pixel_rate_max);
+
     reg_read_cfg.ops = &fpga_vir_cam_ctrl_ops;
-    reg_read_cfg.id = V4L2_CID_PRIVATE_BASE + 0;
+    reg_read_cfg.id = FPGA_VIR_CAM_V4L2_REG_READ;
     reg_read_cfg.name = "Register Read";
     reg_read_cfg.type = V4L2_CTRL_TYPE_INTEGER;
     reg_read_cfg.flags = V4L2_CTRL_FLAG_VOLATILE | 
@@ -419,7 +430,7 @@ static int fpga_vir_cam_init_controls(struct fpga_vir_cam *fvc)
     fvc->rd_reg =  v4l2_ctrl_new_custom(&fvc->ctrl_handler, &reg_read_cfg, NULL);
 
     reg_write_cfg.ops = &fpga_vir_cam_ctrl_ops;
-    reg_write_cfg.id = V4L2_CID_MY_REG_WRITE;
+    reg_write_cfg.id =  FPGA_VIR_CAM_V4L2_REG_WRITE;
     reg_write_cfg.name = "Register Write";
     reg_write_cfg.type = V4L2_CTRL_TYPE_INTEGER;
     reg_write_cfg.flags = V4L2_CTRL_FLAG_WRITE_ONLY |

@@ -1,0 +1,29 @@
+{
+    "C_Cpp.default.browse.path": [
+        // "/usr/local/include",
+        // "/usr/include",
+        // "/usr/src/linux-headers-5.10.198/include",
+        // "/usr/src/linux-headers-5.10.198/arch/arm64/include",
+        "${workspaceFolder}"
+    ],
+    "C_Cpp.default.defines": [
+        "__KERNEL__",
+        "MODULE"
+    ],
+    "C_Cpp.default.intelliSenseMode": "linux-gcc-x64",
+    "C_Cpp.default.compilerPath": "/usr/bin/gcc",
+    "C_Cpp.default.cStandard": "c11",
+    "C_Cpp.default.cppStandard": "c++17",
+    "search.followSymlinks": false,
+    "C_Cpp.autocomplete": "default",
+    "C_Cpp.errorSquiggles": "enabled",
+
+    //"ctags.path": "/usr/src/linux-headers-5.10.198/tags",
+    "C_Cpp.default.browse.databaseFilename": "${workspaceFolder}/.vscode/browse.vc.db",
+    "C_Cpp.default.browse.limitSymbolsToIncludedHeaders": false,
+    "ctagsSupport.ctagsFilename": "/usr/src/linux-headers-5.10.198/tags",
+    "files.associations": {
+        "module.h": "c",
+        "platform_device.h": "c"
+    }
+}

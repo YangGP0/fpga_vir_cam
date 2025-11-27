@@ -44,7 +44,7 @@ struct fpga_vir_cam {
     struct v4l2_ctrl *rd_reg;
     struct v4l2_ctrl *wr_reg;
    
-    struct fpga_vir_cam_mode *cur_mode;
+    const struct fpga_vir_cam_mode *cur_mode;
 
     struct mutex mutex;
     bool streaming;
@@ -66,7 +66,7 @@ static const s64 link_freq_menu_items[] = {
     1250000000ULL,
 };
 
-static struct fpga_vir_cam_mode supported_modes[] = {
+static const struct fpga_vir_cam_mode supported_modes[] = {
     {
         .width = 1024,
         .height = 1025,
@@ -380,7 +380,7 @@ static int fpga_vir_cam_set_pad_format(struct v4l2_subdev *sd,
 		       struct v4l2_subdev_format *fmt)
 {
     struct fpga_vir_cam *fvc = to_fpga_vir_cam(sd);
-    struct fpga_vir_cam_mode *mode;
+    const struct fpga_vir_cam_mode *mode;
     struct v4l2_mbus_framefmt *framefmt;
     // s32 vblank_def;
     // s32 vblank_min;

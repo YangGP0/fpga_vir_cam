@@ -65,7 +65,7 @@ static const s64 link_freq_menu_items[] = {
     1250000000ULL,
 };
 
-static const struct fpga_vir_cam_mode supported_modes[] = {
+static struct fpga_vir_cam_mode supported_modes[] = {
     {
         .width = 1024,
         .height = 1025,
@@ -229,11 +229,12 @@ static int fpga_vir_cam_write_ctrl(struct v4l2_ctrl *ctrl)
     struct fpga_vir_cam *fvc = container_of(ctrl->handler, 
                                         struct fpga_vir_cam, ctrl_handler);
     int ret = 0;
+    
+    struct fpga_vir_cam_reg *reg = (struct fpga_vir_cam_reg *)ctrl->p_new.p;
+    struct i2c_client *client = v4l2_get_subdevdata(&fvc->sd);
     if(fvc->streaming) {
         return -EBUSY;
     }
-    struct fpga_vir_cam_reg *reg = (struct fpga_vir_cam_reg *)ctrl->p_new.p;
-    struct i2c_client *client = v4l2_get_subdevdata(&dev->sd);
     switch (ctrl->id) {
     case FPGA_VIR_CAM_V4L2_REG_WRITE:
         if (reg->reg_addr < FPGA_VIR_CAM_PROTECT_REG) {
@@ -271,21 +272,25 @@ static int fpga_vir_cam_set_stream(struct v4l2_subdev *sd, int enable)
         if (ret < 0)
             goto err_unlock;
 
-        ret = fpga_vir_cam_write_reg(fvc, FPGA_VIR_CAM_REG_START, 1);
+        //ret = fpga_vir_cam_write_reg(fvc, FPGA_VIR_CAM_REG_START, 1);
+         ret = fpga_vir_cam_write_reg(client, FPGA_VIR_CAM_REG_START, 4, 1);
         if (ret) {
             dev_err(&client->dev, "failed to start streaming\n");
             goto err_rpm_put;
         }
     } else {
-        ret = fpga_vir_cam_write_reg(fvc, FPGA_VIR_CAM_REG_START, 0);
+        //ret = fpga_vir_cam_write_reg(fvc, FPGA_VIR_CAM_REG_START, 0);
+        ret = fpga_vir_cam_write_reg(client, FPGA_VIR_CAM_REG_START, 4, 0);
         if (ret) {
             dev_err(&client->dev, "failed to stop streaming\n");
             goto err_unlock;
         }
-        pm_runtime_put(&client->dev);
+        //pm_runtime_put(&client->dev);
     }
 
     fvc->streaming = enable;
+err_unlock:
+err_rpm_put:
     mutex_unlock(&fvc->mutex);
 
     return ret;
@@ -296,7 +301,7 @@ static const struct v4l2_subdev_video_ops fpga_vir_cam_stream_ops = {
 };
 
 static int fpga_vir_cam_enum_mbus_code(struct v4l2_subdev *sd,
-				  struct v4l2_subdev_state *sd_state,
+				  struct v4l2_subdev_pad_config *cfg,
 				  struct v4l2_subdev_mbus_code_enum *code)
 {
 	/* Only one bayer order(GRBG) is supported */
@@ -307,9 +312,12 @@ static int fpga_vir_cam_enum_mbus_code(struct v4l2_subdev *sd,
 
 	return 0;
 }
+// int (*enum_frame_size)(struct v4l2_subdev *sd,
+// 			       struct v4l2_subdev_pad_config *cfg,
+// 			       struct v4l2_subdev_frame_size_enum *fse);
 
 static int fpga_vir_cam_enum_frame_size(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index >= ARRAY_SIZE(supported_modes))
@@ -336,14 +344,14 @@ static void fpga_vir_cam_update_pad_format(const struct fpga_vir_cam_mode *mode,
 }
 
 static int fpga_vir_cam_do_get_pad_format(struct fpga_vir_cam *fvc,
-				     struct v4l2_subdev_state *sd_state,
+				     struct v4l2_subdev_pad_config *cfg,
 				     struct v4l2_subdev_format *fmt)
 {
 	struct v4l2_mbus_framefmt *framefmt;
 	struct v4l2_subdev *sd = &fvc->sd;
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
-		framefmt = v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		framefmt = v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 		fmt->format = *framefmt;
 	} else {
 		fpga_vir_cam_update_pad_format(fvc->cur_mode, fmt);
@@ -353,29 +361,29 @@ static int fpga_vir_cam_do_get_pad_format(struct fpga_vir_cam *fvc,
 }
 
 static int fpga_vir_cam_get_pad_format(struct v4l2_subdev *sd,
-				  struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				  struct v4l2_subdev_format *fmt)
 {
 	struct fpga_vir_cam *fvc = to_fpga_vir_cam(sd);
 	int ret;
 
 	mutex_lock(&fvc->mutex);
-	ret = fpga_vir_cam_do_get_pad_format(fvc, sd_state, fmt);
+	ret = fpga_vir_cam_do_get_pad_format(fvc, cfg, fmt);
 	mutex_unlock(&fvc->mutex);
 
 	return ret;
 }
 
 static int fpga_vir_cam_set_pad_format(struct v4l2_subdev *sd,
-		       struct v4l2_subdev_state *sd_state,
+		       struct v4l2_subdev_pad_config *cfg,
 		       struct v4l2_subdev_format *fmt)
 {
     struct fpga_vir_cam *fvc = to_fpga_vir_cam(sd);
-    const struct fpga_vir_cam_mode *mode;
+    struct fpga_vir_cam_mode *mode;
     struct v4l2_mbus_framefmt *framefmt;
-    s32 vblank_def;
-    s32 vblank_min;
-    s64 h_blank;
+    // s32 vblank_def;
+    // s32 vblank_min;
+    // s64 h_blank;
     s64 pixel_rate;
     s64 link_freq;
 
@@ -391,7 +399,7 @@ static int fpga_vir_cam_set_pad_format(struct v4l2_subdev *sd,
                       fmt->format.width, fmt->format.height);
     fpga_vir_cam_update_pad_format(mode, fmt);
     if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
-        framefmt = v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+        framefmt = v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
         *framefmt = fmt->format;
     } else {
         fvc->cur_mode = mode;
@@ -417,7 +425,7 @@ static int fpga_vir_cam_set_pad_format(struct v4l2_subdev *sd,
         // __v4l2_ctrl_modify_range(fvc->hblank, h_blank,
         //              h_blank, 1, h_blank);
     }
-
+    return 0;
     
 }
 
@@ -439,7 +447,7 @@ static int fpga_vir_cam_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
     const struct fpga_vir_cam_mode *default_mode = &supported_modes[0];
 	struct fpga_vir_cam *fvc = to_fpga_vir_cam(sd);
 	struct v4l2_mbus_framefmt *try_fmt = v4l2_subdev_get_try_format(sd,
-									fh->state,
+									fh->pad,
 									0);
 
 	mutex_lock(&fvc->mutex);
@@ -470,7 +478,7 @@ static int fpga_vir_cam_init_controls(struct fpga_vir_cam *fvc)
 
     ctrl_hdlr = &fvc->ctrl_handler;
     ret = v4l2_ctrl_handler_init(ctrl_hdlr, 4);
-    if (IS_ERR(ret))
+    if (ret)
         return ret;
 
     mutex_init(&fvc->mutex);
@@ -556,6 +564,7 @@ static int fpga_vir_cam_chkeck_hwcfg(struct device *dev)
 	};
 	struct fwnode_handle *ep;
 	struct fwnode_handle *fwnode = dev_fwnode(dev);
+    int ret;
 
     if (!fwnode)
         return -ENXIO;
@@ -566,13 +575,13 @@ static int fpga_vir_cam_chkeck_hwcfg(struct device *dev)
 
 	ret = v4l2_fwnode_endpoint_alloc_parse(ep, &bus_cfg);
 	fwnode_handle_put(ep);
-	if (IS_ERR(ret))
+	if (ret)
 		return ret;
 
     if (bus_cfg.bus.mipi_csi2.num_data_lanes != FPGA_VIR_CAM_DATA_LANES) {
-    dev_err(dev, "number of CSI2 data lanes %d is not supported",
-        bus_cfg.bus.mipi_csi2.num_data_lanes);
-    ret = -EINVAL;
+        dev_err(dev, "number of CSI2 data lanes %d is not supported",
+            bus_cfg.bus.mipi_csi2.num_data_lanes);
+        ret = -EINVAL;
     goto out_err;
 	}
 
@@ -590,7 +599,7 @@ static int fpga_vir_cam_probe(struct i2c_client *client)
 {
     struct device *dev = &client->dev;
     struct fpga_vir_cam *fvc;
-    struct device_node *node = client->dev->of_node;
+    struct device_node *node = dev->of_node;
     int ret;
 
     fvc = devm_kzalloc(&client->dev, sizeof(*fvc), GFP_KERNEL);
@@ -617,29 +626,30 @@ static int fpga_vir_cam_probe(struct i2c_client *client)
     }
     
 
-    v4l2_i2c_subdev_init(&fvc->sd, client, &fpga_vir_cam_stream_ops);
+    v4l2_i2c_subdev_init(&fvc->sd, client, &fpga_vir_cam_subdev_ops);
 
     mutex_init(&fvc->mutex);
     fvc->streaming = false;
     ret = fpga_vir_cam_init_controls(fvc);
-    if (IS_ERR(ret)) {
+    if (ret) {
         dev_err(&client->dev, "failed to init controls: %d\n", ret);
         return ret;
     }
 
-    /* Initialize subdev */
-	fvc->sd.internal_ops = &fpga_vir_cam_internal_ops;
-	fvc->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
-	fvc->sd.entity.ops = &fpga_vir_cam_subdev_entity_ops;
-	fvc->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
+    // /* Initialize subdev */
+	// fvc->sd.internal_ops = &fpga_vir_cam_internal_ops;
+	// fvc->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+	// //fvc->sd.entity.ops = &fpga_vir_cam_subdev_entity_ops;
+    // fvc->sd.entity.ops = &fpga_vir_cam_subdev_ops;
+	// fvc->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
 
-	/* Initialize source pad */
-	fvc->pad.flags = MEDIA_PAD_FL_SOURCE;
-	ret = media_entity_pads_init(&fvc->sd.entity, 1, &fvc->pad);
-	if (ret) {
-		dev_err(&client->dev, "%s failed:%d\n", __func__, ret);
-		goto error_handler_free;
-	}
+	// /* Initialize source pad */
+	// fvc->pad.flags = MEDIA_PAD_FL_SOURCE;
+	// ret = media_entity_pads_init(&fvc->sd.entity, 1, &fvc->pad);
+	// if (ret) {
+	// 	dev_err(&client->dev, "%s failed:%d\n", __func__, ret);
+	// 	goto error_handler_free;
+	// }
 
 
     ret = v4l2_async_register_subdev(&fvc->sd);
@@ -654,7 +664,7 @@ err_free_ctrls:
     return ret;
 }
 
-static void fpga_vir_cam_remove(struct i2c_client *client)
+static int fpga_vir_cam_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct fpga_vir_cam *fvc = to_fpga_vir_cam(sd);
@@ -663,10 +673,11 @@ static void fpga_vir_cam_remove(struct i2c_client *client)
 	media_entity_cleanup(&sd->entity);
 	fpga_vir_cam_free_controls(fvc);
 	//pm_runtime_disable(&client->dev);
+    return 0;
 }
 
 static const struct of_device_id fpga_vir_cam_of_match[] = {
-	{ .compatible = "pys,fpga_vir_cam", },
+	{ .compatible = "pys,fpga_vir_cam"},
 	{},
 };
 
@@ -703,4 +714,4 @@ module_exit(sensor_mod_exit);
 
 MODULE_DESCRIPTION("FPGA Virtual Camera Driver");
 MODULE_AUTHOR("YangGP <1945728545@qq.com>");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");

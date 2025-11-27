@@ -57,6 +57,7 @@ struct fpga_vir_cam {
 	const char		*len_name;
 };
 
+static const char cam_name[] = "fvc";
 enum link_freq_menu_index {
     FPGA_VIR_CAM_LINK_FREQ_1250_MHZ = 0,     
 };
@@ -455,7 +456,7 @@ static int fpga_vir_cam_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	/* Initialize try_fmt */
 	try_fmt->width = default_mode->width;
 	try_fmt->height = default_mode->height;
-	try_fmt->code = MEDIA_BUS_FMT_SGRBG10_1X10;
+	try_fmt->code = MEDIA_BUS_FMT_Y8_1X8;
 	try_fmt->field = V4L2_FIELD_NONE;
 
 	/* No crop or compose */
@@ -625,7 +626,7 @@ static int fpga_vir_cam_probe(struct i2c_client *client)
         return ret;
     }
     
-
+    fvc->cur_mode = &supported_modes[0];
     v4l2_i2c_subdev_init(&fvc->sd, client, &fpga_vir_cam_subdev_ops);
 
     mutex_init(&fvc->mutex);
@@ -636,20 +637,24 @@ static int fpga_vir_cam_probe(struct i2c_client *client)
         return ret;
     }
 
-    // /* Initialize subdev */
-	// fvc->sd.internal_ops = &fpga_vir_cam_internal_ops;
-	// fvc->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
-	// //fvc->sd.entity.ops = &fpga_vir_cam_subdev_entity_ops;
-    // fvc->sd.entity.ops = &fpga_vir_cam_subdev_ops;
-	// fvc->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
+    /* Initialize subdev */
+	fvc->sd.internal_ops = &fpga_vir_cam_internal_ops;
+	fvc->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+    
+    fvc->sd.entity.name = cam_name;
+    fvc->sd.entity.pads = &fvc->pad;
+    fvc->sd.entity.num_pads = 1;
+	fvc->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
 
-	// /* Initialize source pad */
-	// fvc->pad.flags = MEDIA_PAD_FL_SOURCE;
-	// ret = media_entity_pads_init(&fvc->sd.entity, 1, &fvc->pad);
-	// if (ret) {
-	// 	dev_err(&client->dev, "%s failed:%d\n", __func__, ret);
-	// 	goto error_handler_free;
-	// }
+	/* Initialize source pad */
+	fvc->pad.flags = MEDIA_PAD_FL_SOURCE;
+    fvc->pad.index = 0;
+
+	ret = media_entity_pads_init(&fvc->sd.entity, 1, &fvc->pad);
+	if (ret) {
+		dev_err(&client->dev, "%s failed:%d\n", __func__, ret);
+		goto error_handler_free;
+	}
 
 
     ret = v4l2_async_register_subdev(&fvc->sd);
@@ -659,6 +664,7 @@ static int fpga_vir_cam_probe(struct i2c_client *client)
     return ret;
 
 err_free_ctrls:
+error_handler_free:
     fpga_vir_cam_free_controls(fvc);
     mutex_destroy(&fvc->mutex);
     return ret;
